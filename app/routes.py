@@ -6,17 +6,21 @@ from app.services.ai_decision import ai_decision_service
 from app.services.audit_service import audit_service
 from app.services.auth_service import auth_service
 from app.services.market_data import market_data_service
+from app.services.portfolio_service import portfolio_service
+from app.services.risk_management import risk_management_service
+from app.services.technical_analysis import technical_analysis_service
 from app.services.order_management import (
     OrderManagementService,
     OrderRequest,
 )
-from app.services.portfolio_service import portfolio_service
-from app.services.risk_management import risk_management_service
-from app.services.technical_analysis import technical_analysis_service
 
 
 router = APIRouter()
 
+
+# ---------------------------------------------------------------------------
+# REQUEST MODELS
+# ---------------------------------------------------------------------------
 
 class AuthRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
@@ -66,6 +70,10 @@ class OrderSecurityRequest(BaseModel):
     risk_approved: bool = False
 
 
+# ---------------------------------------------------------------------------
+# AUTHENTICATION
+# ---------------------------------------------------------------------------
+
 @router.post("/api/auth")
 async def authenticate(request: AuthRequest):
     result = auth_service.create_token(
@@ -105,7 +113,6 @@ def require_auth(authorization: str | None) -> str:
         )
 
     token = authorization[7:].strip()
-
     result = auth_service.verify_token(token)
 
     if not result.authenticated:
@@ -122,6 +129,10 @@ def require_auth(authorization: str | None) -> str:
 
     return token
 
+
+# ---------------------------------------------------------------------------
+# AUTHORIZATION
+# ---------------------------------------------------------------------------
 
 @router.post("/api/authorize")
 async def authorize(
@@ -177,6 +188,10 @@ async def authorize(
     }
 
 
+# ---------------------------------------------------------------------------
+# MARKET DATA
+# ---------------------------------------------------------------------------
+
 @router.post("/api/market-data")
 async def update_market_data(
     request: MarketDataRequest,
@@ -202,6 +217,10 @@ async def update_market_data(
 
     return result
 
+
+# ---------------------------------------------------------------------------
+# AI MARKET ANALYSIS
+# ---------------------------------------------------------------------------
 
 @router.post("/api/analyze")
 async def analyze_market(
@@ -255,6 +274,10 @@ async def analyze_market(
     return result
 
 
+# ---------------------------------------------------------------------------
+# RISK MANAGEMENT
+# ---------------------------------------------------------------------------
+
 @router.post("/api/risk")
 async def calculate_risk(
     request: RiskRequest,
@@ -288,17 +311,17 @@ async def calculate_risk(
     return response
 
 
+# ---------------------------------------------------------------------------
+# ORDER MANAGEMENT
+# ---------------------------------------------------------------------------
+
 def get_authenticated_user(
     authorization: str | None,
 ):
-    if not authorization:
-        return None
-
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         return None
 
     token = authorization[7:].strip()
-
     result = auth_service.verify_token(token)
 
     if not result.authenticated:
@@ -381,6 +404,7 @@ async def order_security_check(
         system_enabled=request.system_enabled,
         authenticated=True,
         risk_approved=request.risk_approved,
+        token=token,
     )
 
     return {
