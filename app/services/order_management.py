@@ -147,86 +147,76 @@ class OrderManagementService:
         if not validation.approved:
             return validation
 
-        if not authenticated:
-            result = OrderValidation(
-                False,
-                "Authentication required",
-            )
-
-            audit_service.record(
-                "AUTHORIZATION",
-                "REJECTED",
-                {
-                    "symbol": order.symbol,
-                    "reason": result.reason,
-                },
-            )
-
-            return result
-
-        if not token:
-            result = OrderValidation(
-                False,
-                "Authorization token required",
-            )
-
-            audit_service.record(
-                "AUTHORIZATION",
-                "REJECTED",
-                {
-                    "symbol": order.symbol,
-                    "reason": result.reason,
-                },
-            )
-
-            return result
-
-        authorization = auth_service.authorize(
-            token=token,
-            permission=cls.MANAGE_ORDERS_PERMISSION,
+        security_result = security_gate.check(
+            system_enabled=system_enabled,
+            authenticated=authenticated,
+            order_valid=validation.approved,
+            risk_approved=risk_approved,
         )
 
-        if not authorization.authenticated:
-            result = OrderValidation(
-                False,
-                authorization.reason,
+        if not security_result.approved:
+            audit_service.record(
+                "SECURITY_CHECK",
+                "REJECTED",
+                {
+                    "symbol": order.symbol,
+                    "reason": security_result.reason,
+                },
             )
+
+            return OrderValidation(
+                approved=False,
+                reason=security_result.reason,
+            )
+
+        if token is not None:
+            authorization = auth_service.authorize(
+                token=token,
+                permission=cls.MANAGE_ORDERS_PERMISSION,
+            )
+
+            if not authorization.authenticated:
+                result = OrderValidation(
+                    False,
+                    authorization.reason,
+                )
+
+                audit_service.record(
+                    "AUTHORIZATION",
+                    "DENIED",
+                    {
+                        "symbol": order.symbol,
+                        "user_id": authorization.user_id,
+                        "role": authorization.role,
+                        "permission": cls.MANAGE_ORDERS_PERMISSION,
+                        "reason": authorization.reason,
+                    },
+                )
+
+                return result
 
             audit_service.record(
                 "AUTHORIZATION",
-                "DENIED",
+                "APPROVED",
                 {
                     "symbol": order.symbol,
                     "user_id": authorization.user_id,
                     "role": authorization.role,
                     "permission": cls.MANAGE_ORDERS_PERMISSION,
-                    "reason": authorization.reason,
                 },
             )
 
-            return result
-
-        security_result = security_gate.check(
-            system_enabled=system_enabled,
-            authenticated=authorization.authenticated,
-            order_valid=validation.approved,
-            risk_approved=risk_approved,
-        )
-
         audit_service.record(
             "SECURITY_CHECK",
-            "APPROVED" if security_result.approved else "REJECTED",
+            "APPROVED",
             {
                 "symbol": order.symbol,
-                "user_id": authorization.user_id,
-                "role": authorization.role,
-                "permission": cls.MANAGE_ORDERS_PERMISSION,
                 "reason": security_result.reason,
             },
         )
 
         return OrderValidation(
-            approved=security_result.approved,
+            approved=True,
             reason=security_result.reason,
         )
 
