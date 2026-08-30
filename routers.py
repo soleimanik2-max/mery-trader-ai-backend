@@ -520,4 +520,4 @@ async def get_portfolio_position(
         "entry_price": position.entry_price,
         "stop_loss": position.stop_loss,
         "take_profit": position.take_profit,
-}
+    }
