@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.security_gate import security_gate
+
 
 @dataclass
 class OrderRequest:
@@ -19,7 +21,7 @@ class OrderValidation:
 
 
 class OrderManagementService:
-    """Production order validation layer for MERY TRADER AI."""
+    """Order validation and security-gate integration."""
 
     VALID_SIDES = {"BUY", "SELL"}
 
@@ -57,9 +59,32 @@ class OrderManagementService:
                 "Entry price and stop-loss cannot be equal",
             )
 
+        return OrderValidation(True, "Order validation passed")
+
+    @classmethod
+    def security_check(
+        cls,
+        order: OrderRequest,
+        system_enabled: bool,
+        authenticated: bool,
+        risk_approved: bool,
+    ) -> OrderValidation:
+
+        validation = cls.validate_order(order)
+
+        if not validation.approved:
+            return validation
+
+        security_result = security_gate.check(
+            system_enabled=system_enabled,
+            authenticated=authenticated,
+            order_valid=validation.approved,
+            risk_approved=risk_approved,
+        )
+
         return OrderValidation(
-            True,
-            "Order passed basic validation",
+            approved=security_result.approved,
+            reason=security_result.reason,
         )
 
 
