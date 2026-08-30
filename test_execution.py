@@ -105,3 +105,28 @@ def test_executed_paper_order_is_available():
     assert stored_order.side == "BUY"
     assert stored_order.quantity == 1.0
     assert stored_order.entry_price == 100000
+
+
+def test_executed_paper_order_creates_portfolio_position():
+    from app.services.portfolio_service import portfolio_service
+
+    portfolio_service.remove_position("BTCUSDT")
+
+    result = execution_service.execute_paper_order(
+        order=make_order(),
+        system_enabled=True,
+        authenticated=True,
+        risk_approved=True,
+    )
+
+    assert result.executed is True
+
+    position = portfolio_service.get_position("BTCUSDT")
+
+    assert position is not None
+    assert position.symbol == "BTCUSDT"
+    assert position.side == "BUY"
+    assert position.quantity == 1.0
+    assert position.entry_price == 100000
+    assert position.stop_loss == 95000
+    assert position.take_profit == 110000
