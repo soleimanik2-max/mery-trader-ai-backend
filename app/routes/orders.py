@@ -32,16 +32,34 @@ class OrderSecurityRequest(BaseModel):
 
 
 def get_authenticated_user(authorization: str | None):
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization:
+        return None
+
+    if not authorization.startswith("Bearer "):
         return None
 
     token = authorization[7:].strip()
+
+    if not token:
+        return None
+
     result = auth_service.verify_token(token)
 
     if not result.authenticated:
         return None
 
     return result
+
+
+def build_order(request: OrderAPIRequest | OrderSecurityRequest):
+    return OrderRequest(
+        symbol=request.symbol.strip(),
+        side=request.side.strip().upper(),
+        quantity=request.quantity,
+        entry_price=request.entry_price,
+        stop_loss=request.stop_loss,
+        take_profit=request.take_profit,
+    )
 
 
 @router.post("/validate")
@@ -57,14 +75,7 @@ async def validate_order(
             "reason": "Authentication required",
         }
 
-    order = OrderRequest(
-        symbol=request.symbol,
-        side=request.side.upper(),
-        quantity=request.quantity,
-        entry_price=request.entry_price,
-        stop_loss=request.stop_loss,
-        take_profit=request.take_profit,
-    )
+    order = build_order(request)
 
     result = OrderManagementService.validate_order(order)
 
@@ -89,8 +100,10 @@ async def security_check(
             "reason": "Authentication required",
         }
 
+    token = authorization[7:].strip()
+
     permission = auth_service.authorize(
-        token=authorization[7:].strip(),
+        token=token,
         permission="MANAGE_ORDERS",
     )
 
@@ -102,20 +115,14 @@ async def security_check(
             "role": user.role,
         }
 
-    order = OrderRequest(
-        symbol=request.symbol,
-        side=request.side.upper(),
-        quantity=request.quantity,
-        entry_price=request.entry_price,
-        stop_loss=request.stop_loss,
-        take_profit=request.take_profit,
-    )
+    order = build_order(request)
 
     result = OrderManagementService.security_check(
         order=order,
         system_enabled=request.system_enabled,
         authenticated=True,
         risk_approved=request.risk_approved,
+        token=token,
     )
 
     return {
@@ -123,4 +130,4 @@ async def security_check(
         "reason": result.reason,
         "user_id": user.user_id,
         "role": user.role,
-  }
+    }
