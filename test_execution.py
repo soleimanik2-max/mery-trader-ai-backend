@@ -85,3 +85,23 @@ def test_invalid_order_is_not_executed():
     assert result.executed is False
     assert result.order_id is None
     assert result.reason == "Quantity must be greater than zero"
+
+
+def test_executed_paper_order_is_available():
+    result = execution_service.execute_paper_order(
+        order=make_order(),
+        system_enabled=True,
+        authenticated=True,
+        risk_approved=True,
+    )
+
+    assert result.executed is True
+    assert result.order_id is not None
+
+    stored_order = execution_service.get_order(result.order_id)
+
+    assert stored_order is not None
+    assert stored_order.symbol == "BTCUSDT"
+    assert stored_order.side == "BUY"
+    assert stored_order.quantity == 1.0
+    assert stored_order.entry_price == 100000
