@@ -1,13 +1,11 @@
 from fastapi import APIRouter
 
 from app.routes import router as api_router
-from app.routes.portfolio import router as portfolio_router
 
 
 router = APIRouter()
 
 router.include_router(api_router)
-router.include_router(portfolio_router)
 
 
 @router.get("/api/status")
