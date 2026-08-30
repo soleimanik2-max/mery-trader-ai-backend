@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.ai_decision import ai_decision_service
@@ -79,6 +80,7 @@ def require_auth(authorization: str | None) -> str:
         )
 
     token = authorization[7:].strip()
+
     result = auth_service.verify_token(token)
 
     if not result.authenticated:
@@ -120,9 +122,15 @@ async def authorize(
             },
         )
 
-        raise HTTPException(
+        return JSONResponse(
             status_code=403,
-            detail=result.reason,
+            content={
+                "authorized": False,
+                "permission": request.permission,
+                "user_id": result.user_id,
+                "role": result.role,
+                "reason": result.reason,
+            },
         )
 
     audit_service.record(
