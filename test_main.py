@@ -111,3 +111,103 @@ def test_risk_management():
     assert response.json()["approved"] is True
     assert response.json()["risk_amount"] == 20
     assert response.json()["position_size"] == 4
+def test_user_role_permissions():
+    response = client.post(
+        "/api/auth",
+        json={
+            "user_id": "user-test",
+            "role": "USER",
+        },
+    )
+
+    assert response.status_code == 200
+
+    token = response.json()["token"]
+
+    result = client.post(
+        "/api/authorize",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"permission": "ANALYZE_MARKET"},
+    )
+
+    assert result.status_code == 200
+    assert result.json()["authorized"] is True
+
+
+def test_user_cannot_manage_orders():
+    response = client.post(
+        "/api/auth",
+        json={
+            "user_id": "user-test",
+            "role": "USER",
+        },
+    )
+
+    assert response.status_code == 200
+
+    token = response.json()["token"]
+
+    result = client.post(
+        "/api/authorize",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"permission": "MANAGE_ORDERS"},
+    )
+
+    assert result.status_code == 403
+    assert result.json()["authorized"] is False
+
+
+def test_trader_can_manage_orders():
+    response = client.post(
+        "/api/auth",
+        json={
+            "user_id": "trader-test",
+            "role": "TRADER",
+        },
+    )
+
+    assert response.status_code == 200
+
+    token = response.json()["token"]
+
+    result = client.post(
+        "/api/authorize",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"permission": "MANAGE_ORDERS"},
+    )
+
+    assert result.status_code == 200
+    assert result.json()["authorized"] is True
+
+
+def test_invalid_token_is_rejected():
+    result = client.post(
+        "/api/authorize",
+        headers={"Authorization": "Bearer invalid-token"},
+        json={"permission": "ANALYZE_MARKET"},
+    )
+
+    assert result.status_code == 401
+
+
+def test_admin_has_system_admin_permission():
+    response = client.post(
+        "/api/auth",
+        json={
+            "user_id": "admin-test",
+            "role": "ADMIN",
+        },
+    )
+
+    assert response.status_code == 200
+
+    token = response.json()["token"]
+
+    result = client.post(
+        "/api/authorize",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"permission": "SYSTEM_ADMIN"},
+    )
+
+    assert result.status_code == 200
+    assert result.json()["authorized"] is True
