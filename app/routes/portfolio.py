@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Header, HTTPException
 
-from app.services.portfolio_service import portfolio_service
-from app.services.auth_service import auth_service
 from app.services.audit_service import audit_service
+from app.services.auth_service import auth_service
+from app.services.portfolio_service import portfolio_service
 
 
 router = APIRouter(
@@ -26,13 +26,21 @@ def require_auth(authorization: str | None) -> str:
 
     token = authorization[7:].strip()
 
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
     result = auth_service.verify_token(token)
 
     if not result.authenticated:
         audit_service.record(
             "PORTFOLIO_AUTHORIZATION",
             "REJECTED",
-            {"reason": result.reason},
+            {
+                "reason": result.reason,
+            },
         )
 
         raise HTTPException(
@@ -94,7 +102,7 @@ async def get_portfolio_positions(
                 "take_profit": position.take_profit,
             }
             for position in positions
-        ]
+        ],
     }
 
 
@@ -128,4 +136,4 @@ async def get_portfolio_position(
         "entry_price": position.entry_price,
         "stop_loss": position.stop_loss,
         "take_profit": position.take_profit,
-          }
+    }
