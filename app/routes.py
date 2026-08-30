@@ -1,14 +1,19 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.services.ai_decision import ai_decision_service
 from app.services.audit_service import audit_service
+from app.services.auth_service import auth_service
 from app.services.market_data import market_data_service
 from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
 
 
 router = APIRouter()
+
+
+class AuthRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=100)
 
 
 class MarketDataRequest(BaseModel):
@@ -30,8 +35,60 @@ class RiskRequest(BaseModel):
     risk_percent: float = Field(..., ge=1, le=3)
 
 
+@router.post("/api/auth")
+async def authenticate(request: AuthRequest):
+    result = auth_service.create_token(request.user_id)
+
+    audit_service.record(
+        "AUTHENTICATION",
+        "SUCCESS" if result.authenticated else "REJECTED",
+        {"user_id": request.user_id},
+    )
+
+    return {
+        "authenticated": result.authenticated,
+        "token": result.token,
+        "reason": result.reason,
+    }
+
+
+def require_auth(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization format",
+        )
+
+    token = authorization[7:].strip()
+    result = auth_service.verify_token(token)
+
+    if not result.authenticated:
+        audit_service.record(
+            "AUTHORIZATION",
+            "REJECTED",
+            {"reason": result.reason},
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=result.reason,
+        )
+
+    return token
+
+
 @router.post("/api/market-data")
-async def update_market_data(request: MarketDataRequest):
+async def update_market_data(
+    request: MarketDataRequest,
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
     result = market_data_service.update(
         symbol=request.symbol,
         timeframe=request.timeframe,
@@ -52,7 +109,12 @@ async def update_market_data(request: MarketDataRequest):
 
 
 @router.post("/api/analyze")
-async def analyze_market(request: AnalysisRequest):
+async def analyze_market(
+    request: AnalysisRequest,
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
     ema20 = technical_analysis_service.ema(request.prices, 20)
     ema50 = technical_analysis_service.ema(request.prices, 50)
     rsi14 = technical_analysis_service.rsi(request.prices, 14)
@@ -88,7 +150,12 @@ async def analyze_market(request: AnalysisRequest):
 
 
 @router.post("/api/risk")
-async def calculate_risk(request: RiskRequest):
+async def calculate_risk(
+    request: RiskRequest,
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
     result = risk_management_service.calculate_position_size(
         active_capital=request.active_capital,
         entry_price=request.entry_price,
