@@ -6,15 +6,13 @@ def test_database_models_are_registered():
     assert MarketData.__tablename__ == "market_data"
     assert Trade.__tablename__ == "trades"
 
-    assert MarketData in Base.registry.mappers.keys() or any(
-        mapper.class_ is MarketData
+    registered_models = {
+        mapper.class_
         for mapper in Base.registry.mappers
-    )
+    }
 
-    assert Trade in Base.registry.mappers.keys() or any(
-        mapper.class_ is Trade
-        for mapper in Base.registry.mappers
-    )
+    assert MarketData in registered_models
+    assert Trade in registered_models
 
 
 def test_database_engine_exists():
