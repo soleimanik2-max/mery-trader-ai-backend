@@ -1,13 +1,11 @@
 from fastapi import APIRouter
 
 from app.routes import router as api_router
-from app.routes.orders import router as orders_router
 
 
 router = APIRouter()
 
 router.include_router(api_router)
-router.include_router(orders_router)
 
 
 @router.get("/api/status")
