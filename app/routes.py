@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.services.ai_decision import ai_decision_service
+from app.services.audit_service import audit_service
 from app.services.market_data import market_data_service
 from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
@@ -31,12 +32,23 @@ class RiskRequest(BaseModel):
 
 @router.post("/api/market-data")
 async def update_market_data(request: MarketDataRequest):
-    return market_data_service.update(
+    result = market_data_service.update(
         symbol=request.symbol,
         timeframe=request.timeframe,
         price=request.price,
         volume=request.volume,
     )
+
+    audit_service.record(
+        "MARKET_DATA_UPDATE",
+        "SUCCESS",
+        {
+            "symbol": request.symbol,
+            "timeframe": request.timeframe,
+        },
+    )
+
+    return result
 
 
 @router.post("/api/analyze")
@@ -52,7 +64,7 @@ async def analyze_market(request: AnalysisRequest):
         rsi14=rsi14,
     )
 
-    return {
+    result = {
         "symbol": request.symbol,
         "ema20": ema20,
         "ema50": ema50,
@@ -61,6 +73,18 @@ async def analyze_market(request: AnalysisRequest):
         "confidence": decision.confidence,
         "reason": decision.reason,
     }
+
+    audit_service.record(
+        "MARKET_ANALYSIS",
+        "SUCCESS",
+        {
+            "symbol": request.symbol,
+            "decision": decision.decision,
+            "confidence": decision.confidence,
+        },
+    )
+
+    return result
 
 
 @router.post("/api/risk")
@@ -72,9 +96,20 @@ async def calculate_risk(request: RiskRequest):
         risk_percent=request.risk_percent,
     )
 
-    return {
+    response = {
         "approved": result.approved,
         "risk_amount": result.risk_amount,
         "position_size": result.position_size,
         "reason": result.reason,
-  }
+    }
+
+    audit_service.record(
+        "RISK_CALCULATION",
+        "APPROVED" if result.approved else "REJECTED",
+        {
+            "risk_percent": request.risk_percent,
+            "approved": result.approved,
+        },
+    )
+
+    return response
