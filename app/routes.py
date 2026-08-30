@@ -10,6 +10,7 @@ from app.services.order_management import (
     OrderManagementService,
     OrderRequest,
 )
+from app.services.portfolio_service import portfolio_service
 from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
 
@@ -387,4 +388,96 @@ async def order_security_check(
         "reason": result.reason,
         "user_id": user.user_id,
         "role": user.role,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PORTFOLIO API
+# ---------------------------------------------------------------------------
+
+@router.get("/api/portfolio/summary")
+async def get_portfolio_summary(
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
+    summary = portfolio_service.get_summary()
+
+    audit_service.record(
+        "PORTFOLIO_SUMMARY",
+        "SUCCESS",
+        {
+            "position_count": summary.position_count,
+        },
+    )
+
+    return {
+        "cash": summary.cash,
+        "equity": summary.equity,
+        "unrealized_pnl": summary.unrealized_pnl,
+        "position_count": summary.position_count,
+    }
+
+
+@router.get("/api/portfolio/positions")
+async def get_portfolio_positions(
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
+    positions = portfolio_service.get_positions()
+
+    audit_service.record(
+        "PORTFOLIO_POSITIONS",
+        "SUCCESS",
+        {
+            "position_count": len(positions),
+        },
+    )
+
+    return {
+        "positions": [
+            {
+                "symbol": position.symbol,
+                "side": position.side,
+                "quantity": position.quantity,
+                "entry_price": position.entry_price,
+                "stop_loss": position.stop_loss,
+                "take_profit": position.take_profit,
+            }
+            for position in positions
+        ]
+    }
+
+
+@router.get("/api/portfolio/positions/{symbol}")
+async def get_portfolio_position(
+    symbol: str,
+    authorization: str | None = Header(default=None),
+):
+    require_auth(authorization)
+
+    position = portfolio_service.get_position(symbol)
+
+    if position is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Position not found",
+        )
+
+    audit_service.record(
+        "PORTFOLIO_POSITION",
+        "SUCCESS",
+        {
+            "symbol": position.symbol,
+        },
+    )
+
+    return {
+        "symbol": position.symbol,
+        "side": position.side,
+        "quantity": position.quantity,
+        "entry_price": position.entry_price,
+        "stop_loss": position.stop_loss,
+        "take_profit": position.take_profit,
     }
