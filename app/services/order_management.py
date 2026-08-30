@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.services.audit_service import audit_service
+from app.services.auth_service import auth_service
 from app.services.security_gate import security_gate
 
 
@@ -22,9 +23,10 @@ class OrderValidation:
 
 
 class OrderManagementService:
-    """Order validation, security and audit integration."""
+    """Order validation, authorization, security and audit integration."""
 
     VALID_SIDES = {"BUY", "SELL"}
+    MANAGE_ORDERS_PERMISSION = "MANAGE_ORDERS"
 
     @classmethod
     def validate_order(
@@ -114,12 +116,18 @@ class OrderManagementService:
             )
             return result
 
-        result = OrderValidation(True, "Order validation passed")
+        result = OrderValidation(
+            True,
+            "Order validation passed",
+        )
 
         audit_service.record(
             "ORDER_VALIDATION",
             "APPROVED",
-            {"symbol": order.symbol, "side": order.side},
+            {
+                "symbol": order.symbol,
+                "side": order.side,
+            },
         )
 
         return result
@@ -131,6 +139,7 @@ class OrderManagementService:
         system_enabled: bool,
         authenticated: bool,
         risk_approved: bool,
+        token: Optional[str] = None,
     ) -> OrderValidation:
 
         validation = cls.validate_order(order)
@@ -138,9 +147,68 @@ class OrderManagementService:
         if not validation.approved:
             return validation
 
+        if not authenticated:
+            result = OrderValidation(
+                False,
+                "Authentication required",
+            )
+
+            audit_service.record(
+                "AUTHORIZATION",
+                "REJECTED",
+                {
+                    "symbol": order.symbol,
+                    "reason": result.reason,
+                },
+            )
+
+            return result
+
+        if not token:
+            result = OrderValidation(
+                False,
+                "Authorization token required",
+            )
+
+            audit_service.record(
+                "AUTHORIZATION",
+                "REJECTED",
+                {
+                    "symbol": order.symbol,
+                    "reason": result.reason,
+                },
+            )
+
+            return result
+
+        authorization = auth_service.authorize(
+            token=token,
+            permission=cls.MANAGE_ORDERS_PERMISSION,
+        )
+
+        if not authorization.authenticated:
+            result = OrderValidation(
+                False,
+                authorization.reason,
+            )
+
+            audit_service.record(
+                "AUTHORIZATION",
+                "DENIED",
+                {
+                    "symbol": order.symbol,
+                    "user_id": authorization.user_id,
+                    "role": authorization.role,
+                    "permission": cls.MANAGE_ORDERS_PERMISSION,
+                    "reason": authorization.reason,
+                },
+            )
+
+            return result
+
         security_result = security_gate.check(
             system_enabled=system_enabled,
-            authenticated=authenticated,
+            authenticated=authorization.authenticated,
             order_valid=validation.approved,
             risk_approved=risk_approved,
         )
@@ -150,6 +218,9 @@ class OrderManagementService:
             "APPROVED" if security_result.approved else "REJECTED",
             {
                 "symbol": order.symbol,
+                "user_id": authorization.user_id,
+                "role": authorization.role,
+                "permission": cls.MANAGE_ORDERS_PERMISSION,
                 "reason": security_result.reason,
             },
         )
