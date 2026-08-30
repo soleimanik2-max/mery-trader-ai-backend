@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.audit_service import audit_service
 from app.services.security_gate import security_gate
 
 
@@ -21,7 +22,7 @@ class OrderValidation:
 
 
 class OrderManagementService:
-    """Order validation and security-gate integration."""
+    """Order validation, security and audit integration."""
 
     VALID_SIDES = {"BUY", "SELL"}
 
@@ -32,34 +33,96 @@ class OrderManagementService:
     ) -> OrderValidation:
 
         if not order.symbol.strip():
-            return OrderValidation(False, "Symbol is required")
+            result = OrderValidation(False, "Symbol is required")
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if order.side not in cls.VALID_SIDES:
-            return OrderValidation(False, "Invalid order side")
+            result = OrderValidation(False, "Invalid order side")
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if order.quantity <= 0:
-            return OrderValidation(False, "Quantity must be greater than zero")
+            result = OrderValidation(
+                False,
+                "Quantity must be greater than zero",
+            )
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if order.entry_price is not None and order.entry_price <= 0:
-            return OrderValidation(False, "Entry price must be greater than zero")
+            result = OrderValidation(
+                False,
+                "Entry price must be greater than zero",
+            )
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if order.stop_loss is not None and order.stop_loss <= 0:
-            return OrderValidation(False, "Stop-loss must be greater than zero")
+            result = OrderValidation(
+                False,
+                "Stop-loss must be greater than zero",
+            )
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if order.take_profit is not None and order.take_profit <= 0:
-            return OrderValidation(False, "Take-profit must be greater than zero")
+            result = OrderValidation(
+                False,
+                "Take-profit must be greater than zero",
+            )
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
         if (
             order.entry_price is not None
             and order.stop_loss is not None
             and order.entry_price == order.stop_loss
         ):
-            return OrderValidation(
+            result = OrderValidation(
                 False,
                 "Entry price and stop-loss cannot be equal",
             )
+            audit_service.record(
+                "ORDER_VALIDATION",
+                "REJECTED",
+                {"reason": result.reason},
+            )
+            return result
 
-        return OrderValidation(True, "Order validation passed")
+        result = OrderValidation(True, "Order validation passed")
+
+        audit_service.record(
+            "ORDER_VALIDATION",
+            "APPROVED",
+            {"symbol": order.symbol, "side": order.side},
+        )
+
+        return result
 
     @classmethod
     def security_check(
@@ -80,6 +143,15 @@ class OrderManagementService:
             authenticated=authenticated,
             order_valid=validation.approved,
             risk_approved=risk_approved,
+        )
+
+        audit_service.record(
+            "SECURITY_CHECK",
+            "APPROVED" if security_result.approved else "REJECTED",
+            {
+                "symbol": order.symbol,
+                "reason": security_result.reason,
+            },
         )
 
         return OrderValidation(
