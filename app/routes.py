@@ -14,6 +14,11 @@ router = APIRouter()
 
 class AuthRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=100)
+    role: str = Field(default="USER", min_length=1, max_length=20)
+
+
+class AuthorizeRequest(BaseModel):
+    permission: str = Field(..., min_length=1, max_length=50)
 
 
 class MarketDataRequest(BaseModel):
@@ -37,18 +42,26 @@ class RiskRequest(BaseModel):
 
 @router.post("/api/auth")
 async def authenticate(request: AuthRequest):
-    result = auth_service.create_token(request.user_id)
+    result = auth_service.create_token(
+        user_id=request.user_id,
+        role=request.role,
+    )
 
     audit_service.record(
         "AUTHENTICATION",
         "SUCCESS" if result.authenticated else "REJECTED",
-        {"user_id": request.user_id},
+        {
+            "user_id": request.user_id,
+            "role": request.role.upper(),
+        },
     )
 
     return {
         "authenticated": result.authenticated,
         "token": result.token,
         "reason": result.reason,
+        "user_id": result.user_id,
+        "role": result.role,
     }
 
 
@@ -74,12 +87,61 @@ def require_auth(authorization: str | None) -> str:
             "REJECTED",
             {"reason": result.reason},
         )
+
         raise HTTPException(
             status_code=401,
             detail=result.reason,
         )
 
     return token
+
+
+@router.post("/api/authorize")
+async def authorize(
+    request: AuthorizeRequest,
+    authorization: str | None = Header(default=None),
+):
+    token = require_auth(authorization)
+
+    result = auth_service.authorize(
+        token=token,
+        permission=request.permission,
+    )
+
+    if not result.authenticated:
+        audit_service.record(
+            "AUTHORIZATION",
+            "DENIED",
+            {
+                "permission": request.permission,
+                "user_id": result.user_id,
+                "role": result.role,
+                "reason": result.reason,
+            },
+        )
+
+        raise HTTPException(
+            status_code=403,
+            detail=result.reason,
+        )
+
+    audit_service.record(
+        "AUTHORIZATION",
+        "APPROVED",
+        {
+            "permission": request.permission,
+            "user_id": result.user_id,
+            "role": result.role,
+        },
+    )
+
+    return {
+        "authorized": True,
+        "permission": request.permission,
+        "user_id": result.user_id,
+        "role": result.role,
+        "reason": result.reason,
+    }
 
 
 @router.post("/api/market-data")
