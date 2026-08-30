@@ -6,10 +6,13 @@ from main import app
 client = TestClient(app)
 
 
-def get_auth_headers():
+def get_auth_headers(role="USER"):
     response = client.post(
         "/api/auth",
-        json={"user_id": "test-user"},
+        json={
+            "user_id": "test-user",
+            "role": role,
+        },
     )
 
     assert response.status_code == 200
@@ -111,6 +114,8 @@ def test_risk_management():
     assert response.json()["approved"] is True
     assert response.json()["risk_amount"] == 20
     assert response.json()["position_size"] == 4
+
+
 def test_user_role_permissions():
     response = client.post(
         "/api/auth",
@@ -211,3 +216,39 @@ def test_admin_has_system_admin_permission():
 
     assert result.status_code == 200
     assert result.json()["authorized"] is True
+
+
+def test_portfolio_summary_requires_authentication():
+    response = client.get("/api/portfolio/summary")
+
+    assert response.status_code == 401
+
+
+def test_portfolio_summary():
+    response = client.get(
+        "/api/portfolio/summary",
+        headers=get_auth_headers(),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "cash" in data
+    assert "equity" in data
+    assert "unrealized_pnl" in data
+    assert "position_count" in data
+
+
+def test_portfolio_positions():
+    response = client.get(
+        "/api/portfolio/positions",
+        headers=get_auth_headers(),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "positions" in data
+    assert isinstance(data["positions"], list)
