@@ -100,4 +100,4 @@ async def root():
 async def health():
     return {
         "status": "healthy",
-    }
+    {
