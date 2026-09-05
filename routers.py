@@ -3,7 +3,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from database import get_db
-
 from app.services.ai_decision import ai_decision_service
 from app.services.audit_service import audit_service
 from app.services.auth_service import auth_service
@@ -17,8 +16,8 @@ from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
 from app.services.paper_trading import PaperTradingService
 
-
 router = APIRouter()
+
 # ---------------------------------------------------------------------------
 # API STATUS / VERSION
 # ---------------------------------------------------------------------------
@@ -36,7 +35,6 @@ async def api_version():
     return {
         "version": "1.0.0",
     }
-
 
 # ---------------------------------------------------------------------------
 # REQUEST MODELS
@@ -88,6 +86,7 @@ class OrderSecurityRequest(BaseModel):
     take_profit: float | None = Field(default=None, gt=0)
     system_enabled: bool = True
     risk_approved: bool = False
+
 # ---------------------------------------------------------------------------
 # AUTHENTICATION
 # ---------------------------------------------------------------------------
@@ -107,7 +106,6 @@ async def authenticate(request: AuthRequest):
             "role": request.role.upper(),
         },
     )
-
     return {
         "authenticated": result.authenticated,
         "token": result.token,
@@ -123,7 +121,6 @@ def require_auth(authorization: str | None) -> str:
             status_code=401,
             detail="Authentication required",
         )
-
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -139,7 +136,6 @@ def require_auth(authorization: str | None) -> str:
         )
 
     result = auth_service.verify_token(token)
-
     if not result.authenticated:
         audit_service.record(
             "AUTHORIZATION",
@@ -156,7 +152,6 @@ def require_auth(authorization: str | None) -> str:
 
     return token
 
-
 # ---------------------------------------------------------------------------
 # AUTHORIZATION
 # ---------------------------------------------------------------------------
@@ -172,7 +167,6 @@ async def authorize(
         token=token,
         permission=request.permission,
     )
-
     if not result.authenticated:
         audit_service.record(
             "AUTHORIZATION",
@@ -184,7 +178,6 @@ async def authorize(
                 "reason": result.reason,
             },
         )
-
         return JSONResponse(
             status_code=403,
             content={
@@ -195,7 +188,6 @@ async def authorize(
                 "reason": result.reason,
             },
         )
-
     audit_service.record(
         "AUTHORIZATION",
         "APPROVED",
@@ -205,7 +197,6 @@ async def authorize(
             "role": result.role,
         },
     )
-
     return {
         "authorized": True,
         "permission": request.permission,
@@ -213,6 +204,7 @@ async def authorize(
         "role": result.role,
         "reason": result.reason,
     }
+
 # ---------------------------------------------------------------------------
 # MARKET DATA
 # ---------------------------------------------------------------------------
@@ -230,7 +222,6 @@ async def update_market_data(
         price=request.price,
         volume=request.volume,
     )
-
     audit_service.record(
         "MARKET_DATA_UPDATE",
         "SUCCESS",
@@ -241,8 +232,6 @@ async def update_market_data(
     )
 
     return result
-
-
 # ---------------------------------------------------------------------------
 # AI MARKET ANALYSIS
 # ---------------------------------------------------------------------------
@@ -334,279 +323,138 @@ async def calculate_risk(
     )
 
     return response
+
+
 # ---------------------------------------------------------------------------
 # ORDER MANAGEMENT
 # ---------------------------------------------------------------------------
-
-def get_authenticated_user(
-    authorization: str | None,
-):
-    if not authorization:
-        return None
-
-    if not authorization.startswith("Bearer "):
-        return None
-
-    token = authorization[7:].strip()
-
-    if not token:
-        return None
-
-    result = auth_service.verify_token(token)
-
-    if not result.authenticated:
-        return None
-
-    return result
-
 
 @router.post("/api/orders/validate")
 async def validate_order(
     request: OrderAPIRequest,
     authorization: str | None = Header(default=None),
 ):
-    user = get_authenticated_user(authorization)
-
-    if user is None:
-        return {
-            "approved": False,
-            "reason": "Authentication required",
-        }
+    require_auth(authorization)
 
     order = OrderRequest(
         symbol=request.symbol,
-        side=request.side.upper(),
+        side=request.side,
         quantity=request.quantity,
         entry_price=request.entry_price,
         stop_loss=request.stop_loss,
         take_profit=request.take_profit,
     )
 
-    result = OrderManagementService.validate_order(order)
+    service = OrderManagementService()
+
+    result = service.validate_order(order)
+
+    audit_service.record(
+        "ORDER_VALIDATION",
+        "APPROVED" if result.valid else "REJECTED",
+        {
+            "symbol": request.symbol,
+            "side": request.side,
+            "quantity": request.quantity,
+        },
+    )
 
     return {
-        "approved": result.approved,
+        "valid": result.valid,
         "reason": result.reason,
-        "user_id": user.user_id,
-        "role": user.role,
+        "symbol": request.symbol,
+        "side": request.side,
+        "quantity": request.quantity,
+        "entry_price": request.entry_price,
+        "stop_loss": request.stop_loss,
+        "take_profit": request.take_profit,
     }
 
 
-@router.post("/api/orders/security-check")
-async def order_security_check(
+@router.post("/api/orders")
+async def create_order(
     request: OrderSecurityRequest,
     authorization: str | None = Header(default=None),
 ):
-    user = get_authenticated_user(authorization)
+    token = require_auth(authorization)
 
-    if user is None:
-        return {
-            "approved": False,
-            "reason": "Authentication required",
-        }
+    auth_result = auth_service.verify_token(token)
 
-    token = authorization[7:].strip()
-
-    permission = auth_service.authorize(
-        token=token,
-        permission="MANAGE_ORDERS",
-    )
-
-    if not permission.authenticated:
-        return {
-            "approved": False,
-            "reason": permission.reason,
-            "user_id": user.user_id,
-            "role": user.role,
-        }
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     order = OrderRequest(
         symbol=request.symbol,
-        side=request.side.upper(),
+        side=request.side,
         quantity=request.quantity,
         entry_price=request.entry_price,
         stop_loss=request.stop_loss,
         take_profit=request.take_profit,
     )
 
-    result = OrderManagementService.security_check(
-        order=order,
-        system_enabled=request.system_enabled,
-        authenticated=True,
-        risk_approved=request.risk_approved,
-        token=token,
-    )
+    service = OrderManagementService()
 
-    return {
-        "approved": result.approved,
-        "reason": result.reason,
-        "user_id": user.user_id,
-        "role": user.role,
-    }
-# ---------------------------------------------------------------------------
-# PORTFOLIO
-# ---------------------------------------------------------------------------
+    validation = service.validate_order(order)
 
-@router.get("/api/portfolio/summary")
-async def get_portfolio_summary(
-    authorization: str | None = Header(default=None),
-):
-    require_auth(authorization)
-
-    summary = portfolio_service.get_summary()
-
-    audit_service.record(
-        "PORTFOLIO_SUMMARY",
-        "SUCCESS",
-        {
-            "position_count": summary.position_count,
-        },
-    )
-
-    return {
-        "cash": summary.cash,
-        "equity": summary.equity,
-        "unrealized_pnl": summary.unrealized_pnl,
-        "position_count": summary.position_count,
-    }
-
-
-@router.get("/api/portfolio/positions")
-async def get_portfolio_positions(
-    authorization: str | None = Header(default=None),
-):
-    require_auth(authorization)
-
-    positions = portfolio_service.get_positions()
-
-    audit_service.record(
-        "PORTFOLIO_POSITIONS",
-        "SUCCESS",
-        {
-            "position_count": len(positions),
-        },
-    )
-
-    return {
-        "positions": [
+    if not validation.valid:
+        audit_service.record(
+            "ORDER",
+            "REJECTED",
             {
-                "symbol": position.symbol,
-                "side": position.side,
-                "quantity": position.quantity,
-                "entry_price": position.entry_price,
-                "stop_loss": position.stop_loss,
-                "take_profit": position.take_profit,
-            }
-            for position in positions
-        ]
-    }
-
-
-@router.get("/api/portfolio/positions/{symbol}")
-async def get_portfolio_position(
-    symbol: str,
-    authorization: str | None = Header(default=None),
-):
-    require_auth(authorization)
-
-    position = portfolio_service.get_position(symbol)
-
-    if position is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Position not found",
+                "user_id": auth_result.user_id,
+                "symbol": request.symbol,
+                "reason": validation.reason,
+            },
         )
 
-    audit_service.record(
-        "PORTFOLIO_POSITION",
-        "SUCCESS",
-        {
-            "symbol": position.symbol,
-        },
-    )
+        return {
+            "accepted": False,
+            "executed": False,
+            "status": "REJECTED",
+            "reason": validation.reason,
+        }
 
-    return {
-        "symbol": symbol,
-        "side": position.side,
-        "quantity": position.quantity,
-        "entry_price": position.entry_price,
-        "stop_loss": position.stop_loss,
-        "take_profit": position.take_profit,
-    }
+    if not request.system_enabled:
+        audit_service.record(
+            "ORDER",
+            "REJECTED",
+            {
+                "user_id": auth_result.user_id,
+                "symbol": request.symbol,
+                "reason": "Trading system is disabled",
+            },
+        )
+
+        return {
+            "accepted": False,
+            "executed": False,
+            "status": "REJECTED",
+            "reason": "Trading system is disabled",
+        }
+
+    if not request.risk_approved:
+        audit_service.record(
+            "ORDER",
+            "REJECTED",
+            {
+                "user_id": auth_result.user_id,
+                "symbol": request.symbol,
+                "reason": "Risk approval required",
+            },
+        )
+
+        return {
+            "accepted": False,
+            "executed": False,
+            "status": "REJECTED",
+            "reason": "Risk approval required",
 # ---------------------------------------------------------------------------
-# PAPER TRADING
+# PAPER TRADING - CLOSE TRADE
 # ---------------------------------------------------------------------------
 
-class PaperTradeOpenRequest(BaseModel):
-    symbol: str = Field(..., min_length=1, max_length=50)
-    side: str = Field(..., min_length=1, max_length=10)
-    entry_price: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    stop_loss: float | None = Field(default=None, gt=0)
-    take_profit: float | None = Field(default=None, gt=0)
-    starting_capital: float = Field(..., gt=0)
-
-
-class PaperTradeCloseRequest(BaseModel):
-    trade_id: int = Field(..., gt=0)
-    exit_price: float = Field(..., gt=0)
-
-
-class PaperPriceRequest(BaseModel):
-    symbol: str = Field(..., min_length=1, max_length=50)
-    price: float = Field(..., gt=0)
-
-
-@router.post("/api/paper-trading/open")
-async def open_paper_trade(
-    request: PaperTradeOpenRequest,
-    authorization: str | None = Header(default=None),
-    db=Depends(get_db),
-):
-    token = require_auth(authorization)
-    auth_result = auth_service.verify_token(token)
-
-    service = PaperTradingService(db)
-
-    trade = service.open_trade(
-        user_id=auth_result.user_id,
-        symbol=request.symbol.upper(),
-        side=request.side.upper(),
-        entry_price=request.entry_price,
-        quantity=request.quantity,
-        stop_loss=request.stop_loss,
-        take_profit=request.take_profit,
-        starting_capital=request.starting_capital,
-    )
-
-    audit_service.record(
-        "PAPER_TRADE_OPEN",
-        "SUCCESS",
-        {
-            "user_id": auth_result.user_id,
-            "trade_id": trade.id,
-            "symbol": trade.symbol,
-            "side": trade.side,
-        },
-    )
-
-    return {
-        "success": True,
-        "trade": {
-            "id": trade.id,
-            "user_id": trade.user_id,
-            "symbol": trade.symbol,
-            "side": trade.side,
-            "entry_price": trade.entry_price,
-            "stop_loss": trade.stop_loss,
-            "take_profit": trade.take_profit,
-            "quantity": trade.quantity,
-            "status": trade.status,
-            "realized_pnl": trade.realized_pnl,
-            "fee": trade.fee,
-            "slippage": trade.slippage,
-        },
-    }
 @router.post("/api/paper-trading/close")
 async def close_paper_trade(
     request: PaperTradeCloseRequest,
@@ -614,11 +462,18 @@ async def close_paper_trade(
     db=Depends(get_db),
 ):
     token = require_auth(authorization)
+
     auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     service = PaperTradingService(db)
 
-    trade = service.close_trade(
+    result = service.close_trade(
         user_id=auth_result.user_id,
         trade_id=request.trade_id,
         exit_price=request.exit_price,
@@ -626,34 +481,19 @@ async def close_paper_trade(
 
     audit_service.record(
         "PAPER_TRADE_CLOSE",
-        "SUCCESS",
+        "SUCCESS" if result.get("success", False) else "REJECTED",
         {
             "user_id": auth_result.user_id,
-            "trade_id": trade.id,
-            "symbol": trade.symbol,
+            "trade_id": request.trade_id,
         },
     )
 
-    return {
-        "success": True,
-        "trade": {
-            "id": trade.id,
-            "user_id": trade.user_id,
-            "symbol": trade.symbol,
-            "side": trade.side,
-            "entry_price": trade.entry_price,
-            "exit_price": trade.exit_price,
-            "stop_loss": trade.stop_loss,
-            "take_profit": trade.take_profit,
-            "quantity": trade.quantity,
-            "status": trade.status,
-            "realized_pnl": trade.realized_pnl,
-            "fee": trade.fee,
-            "slippage": trade.slippage,
-            "closed_at": trade.closed_at,
-        },
-    }
+    return result
 
+
+# ---------------------------------------------------------------------------
+# PAPER TRADING - ACCOUNT
+# ---------------------------------------------------------------------------
 
 @router.get("/api/paper-trading/account")
 async def get_paper_account(
@@ -661,64 +501,51 @@ async def get_paper_account(
     db=Depends(get_db),
 ):
     token = require_auth(authorization)
+
     auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     service = PaperTradingService(db)
 
-    account = service.get_account(
+    return service.get_account(
         user_id=auth_result.user_id,
     )
 
-    if account is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Paper trading account not found",
-        )
 
-    return {
-        "user_id": account.user_id,
-        "starting_capital": account.starting_capital,
-        "cash": account.cash,
-        "realized_pnl": account.realized_pnl,
-        "total_fees": account.total_fees,
-        "created_at": account.created_at,
-        "updated_at": account.updated_at,
-    }
+# ---------------------------------------------------------------------------
+# PAPER TRADING - OPEN TRADES
+# ---------------------------------------------------------------------------
+
 @router.get("/api/paper-trading/open-trades")
-async def get_paper_open_trades(
+async def get_open_paper_trades(
     authorization: str | None = Header(default=None),
     db=Depends(get_db),
 ):
     token = require_auth(authorization)
+
     auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     service = PaperTradingService(db)
 
-    trades = service.get_open_trades(
+    return service.get_open_trades(
         user_id=auth_result.user_id,
     )
 
-    return {
-        "user_id": auth_result.user_id,
-        "trades": [
-            {
-                "id": trade.id,
-                "symbol": trade.symbol,
-                "side": trade.side,
-                "entry_price": trade.entry_price,
-                "stop_loss": trade.stop_loss,
-                "take_profit": trade.take_profit,
-                "quantity": trade.quantity,
-                "status": trade.status,
-                "realized_pnl": trade.realized_pnl,
-                "fee": trade.fee,
-                "slippage": trade.slippage,
-                "created_at": trade.created_at,
-            }
-            for trade in trades
-        ],
-    }
 
+# ---------------------------------------------------------------------------
+# PAPER TRADING - TRADE HISTORY
+# ---------------------------------------------------------------------------
 
 @router.get("/api/paper-trading/history")
 async def get_paper_trade_history(
@@ -726,120 +553,87 @@ async def get_paper_trade_history(
     db=Depends(get_db),
 ):
     token = require_auth(authorization)
+
     auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     service = PaperTradingService(db)
 
-    trades = service.get_trade_history(
+    return service.get_trade_history(
         user_id=auth_result.user_id,
     )
 
-    return {
-        "user_id": auth_result.user_id,
-        "trades": [
-            {
-                "id": trade.id,
-                "symbol": trade.symbol,
-                "side": trade.side,
-                "entry_price": trade.entry_price,
-                "exit_price": trade.exit_price,
-                "stop_loss": trade.stop_loss,
-                "take_profit": trade.take_profit,
-                "quantity": trade.quantity,
-                "status": trade.status,
-                "realized_pnl": trade.realized_pnl,
-                "fee": trade.fee,
-                "slippage": trade.slippage,
-                "created_at": trade.created_at,
-                "closed_at": trade.closed_at,
-            }
-            for trade in trades
-        ],
-    }
 
+# ---------------------------------------------------------------------------
+# PAPER TRADING - EQUITY
+# ---------------------------------------------------------------------------
 
-@router.post("/api/paper-trading/process-price")
-async def process_paper_market_price(
-    request: PaperPriceRequest,
+@router.get("/api/paper-trading/equity")
+async def get_paper_equity(
     authorization: str | None = Header(default=None),
     db=Depends(get_db),
 ):
     token = require_auth(authorization)
+
     auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
 
     service = PaperTradingService(db)
 
-    result = service.process_market_price(
+    return service.get_equity(
         user_id=auth_result.user_id,
-        symbol=request.symbol.upper(),
-        price=request.price,
     )
 
-    return {
-        "success": True,
-        "user_id": auth_result.user_id,
-        "symbol": request.symbol.upper(),
-        "price": request.price,
-        "result": result,
-    }
+
+# ---------------------------------------------------------------------------
+# PAPER TRADING - UNREALIZED PNL
+# ---------------------------------------------------------------------------
+
+class PaperUnrealizedRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=50)
+    current_price: float = Field(..., gt=0)
+
+
+@router.post("/api/paper-trading/unrealized-pnl")
+async def calculate_unrealized_pnl(
+    request: PaperUnrealizedRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+
+    auth_result = auth_service.verify_token(token)
+
+    if not auth_result.authenticated:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    service = PaperTradingService(db)
+
+    return service.calculate_unrealized_pnl(
+        user_id=auth_result.user_id,
+        symbol=request.symbol,
+        current_price=request.current_price,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PAPER TRADING - EVALU
 # ---------------------------------------------------------------------------
 # ROOT / HEALTH
 # ---------------------------------------------------------------------------
-
-@router.get("/")
-async def root():
-    return {
-        "app": "MERY TRADER AI",
-        "status": "online",
-    }
-
-
-@router.get("/health")
-async def health():
-    return {
-        "status": "healthy",
-    }
-        "trades": [
-            {
-                "id": trade.id,
-                "symbol": trade.symbol,
-                "side": trade.side,
-                "entry_price": trade.entry_price,
-                "exit_price": trade.exit_price,
-                "stop_loss": trade.stop_loss,
-                "take_profit": trade.take_profit,
-                "quantity": trade.quantity,
-                "status": trade.status,
-                "realized_pnl": trade.realized_pnl,
-                "fee": trade.fee,
-                "slippage": trade.slippage,
-                "created_at": trade.created_at,
-                "closed_at": trade.closed_at,
-            }
-            for trade in trades
-        ],
-    }
-
-
-@router.post("/api/paper-trading/process-price")
-async def process_paper_trading_price(
-    request: PaperPriceRequest,
-    authorization: str | None = Header(default=None),
-    db=Depends(get_db),
-):
-    token = require_auth(authorization)
-    auth_result = auth_service.verify_token(token)
-
-    service = PaperTradingService(db)
-
-    result = service.process_market_price(
-        user_id=auth_result.user_id,
-        symbol=request.symbol,
-        price=request.price,
-    )
-
-    return result
-
 
 @router.get("/")
 async def root():
