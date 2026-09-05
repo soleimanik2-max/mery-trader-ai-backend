@@ -3,6 +3,9 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 
+from database import SessionLocal
+from models import AuthToken
+
 
 @dataclass
 class AuthResult:
@@ -14,12 +17,15 @@ class AuthResult:
 
 
 class AuthService:
-    """Authentication and authorization service for MERY TRADER AI."""
+    """Persistent authentication and authorization service for MERY TRADER AI."""
 
     TOKEN_LIFETIME_HOURS = 12
 
     ROLES = {
-        "USER": {"READ_MARKET", "ANALYZE_MARKET"},
+        "USER": {
+            "READ_MARKET",
+            "ANALYZE_MARKET",
+        },
         "TRADER": {
             "READ_MARKET",
             "ANALYZE_MARKET",
@@ -34,9 +40,6 @@ class AuthService:
             "SYSTEM_ADMIN",
         },
     }
-
-    def __init__(self):
-        self._tokens: dict[str, dict] = {}
 
     def create_token(
         self,
@@ -69,11 +72,30 @@ class AuthService:
             + timedelta(hours=self.TOKEN_LIFETIME_HOURS)
         )
 
-        self._tokens[token_hash] = {
-            "user_id": user_id,
-            "role": role,
-            "expires_at": expires_at,
-        }
+        db = SessionLocal()
+
+        try:
+            auth_token = AuthToken(
+                token_hash=token_hash,
+                user_id=user_id,
+                role=role,
+                expires_at=expires_at,
+            )
+
+            db.add(auth_token)
+            db.commit()
+
+        except Exception:
+            db.rollback()
+
+            return AuthResult(
+                authenticated=False,
+                token=None,
+                reason="Authentication storage failed",
+            )
+
+        finally:
+            db.close()
 
         return AuthResult(
             authenticated=True,
@@ -83,9 +105,14 @@ class AuthService:
             role=role,
         )
 
-    def verify_token(self, token: str) -> AuthResult:
+    def verify_token(
+        self,
+        token: str,
+    ) -> AuthResult:
 
-        if not token.strip():
+        token = token.strip()
+
+        if not token:
             return AuthResult(
                 authenticated=False,
                 token=None,
@@ -93,31 +120,52 @@ class AuthService:
             )
 
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        session = self._tokens.get(token_hash)
 
-        if session is None:
-            return AuthResult(
-                authenticated=False,
-                token=None,
-                reason="Invalid token",
+        db = SessionLocal()
+
+        try:
+            session = (
+                db.query(AuthToken)
+                .filter(
+                    AuthToken.token_hash == token_hash
+                )
+                .first()
             )
 
-        if datetime.now(timezone.utc) >= session["expires_at"]:
-            del self._tokens[token_hash]
+            if session is None:
+                return AuthResult(
+                    authenticated=False,
+                    token=None,
+                    reason="Invalid token",
+                )
+
+            expires_at = session.expires_at
+
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(
+                    tzinfo=timezone.utc
+                )
+
+            if datetime.now(timezone.utc) >= expires_at:
+                db.delete(session)
+                db.commit()
+
+                return AuthResult(
+                    authenticated=False,
+                    token=None,
+                    reason="Token expired",
+                )
 
             return AuthResult(
-                authenticated=False,
-                token=None,
-                reason="Token expired",
+                authenticated=True,
+                token=token,
+                reason="Authentication verified",
+                user_id=session.user_id,
+                role=session.role,
             )
 
-        return AuthResult(
-            authenticated=True,
-            token=token,
-            reason="Authentication verified",
-            user_id=session["user_id"],
-            role=session["role"],
-        )
+        finally:
+            db.close()
 
     def authorize(
         self,
