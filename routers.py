@@ -799,3 +799,58 @@ async def health():
     return {
         "status": "healthy",
     }
+        "trades": [
+            {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "entry_price": trade.entry_price,
+                "exit_price": trade.exit_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "quantity": trade.quantity,
+                "status": trade.status,
+                "realized_pnl": trade.realized_pnl,
+                "fee": trade.fee,
+                "slippage": trade.slippage,
+                "created_at": trade.created_at,
+                "closed_at": trade.closed_at,
+            }
+            for trade in trades
+        ],
+    }
+
+
+@router.post("/api/paper-trading/process-price")
+async def process_paper_trading_price(
+    request: PaperPriceRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    result = service.process_market_price(
+        user_id=auth_result.user_id,
+        symbol=request.symbol,
+        price=request.price,
+    )
+
+    return result
+
+
+@router.get("/")
+async def root():
+    return {
+        "app": "MERY TRADER AI",
+        "status": "online",
+    }
+
+
+@router.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+    }
