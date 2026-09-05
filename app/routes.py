@@ -774,3 +774,43 @@ async def process_paper_market_price(
             for result in results
         ],
     }
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    results = PaperTradingService.process_market_price(
+        db=db,
+        user_id=user.user_id,
+        symbol=request.symbol,
+        current_price=request.current_price,
+    )
+
+    audit_service.record(
+        "PAPER_TRADE_PROCESS_PRICE",
+        "SUCCESS",
+        {
+            "user_id": user.user_id,
+            "symbol": request.symbol.upper(),
+            "current_price": request.current_price,
+            "closed_trade_count": len(results),
+        },
+    )
+
+    return {
+        "user_id": user.user_id,
+        "symbol": request.symbol.upper(),
+        "current_price": request.current_price,
+        "closed_trades": [
+            {
+                "approved": result.approved,
+                "trade_id": result.trade_id,
+                "reason": result.reason,
+                "cash": result.cash,
+                "realized_pnl": result.realized_pnl,
+                "status": result.status,
+            }
+            for result in results
+        ],
+    }
