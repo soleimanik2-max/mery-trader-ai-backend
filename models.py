@@ -9,10 +9,28 @@ class MarketData(Base):
     __tablename__ = "market_data"
 
     id = Column(Integer, primary_key=True, index=True)
-    symbol = Column(String(50), index=True, nullable=False)
-    timeframe = Column(String(20), nullable=False)
-    price = Column(Float, nullable=False)
-    volume = Column(Float, nullable=True)
+
+    symbol = Column(
+        String(50),
+        index=True,
+        nullable=False,
+    )
+
+    timeframe = Column(
+        String(20),
+        nullable=False,
+    )
+
+    price = Column(
+        Float,
+        nullable=False,
+    )
+
+    volume = Column(
+        Float,
+        nullable=True,
+    )
+
     timestamp = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -23,18 +41,53 @@ class MarketData(Base):
 class Trade(Base):
     __tablename__ = "trades"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
-    symbol = Column(String(50), index=True, nullable=False)
-    side = Column(String(10), nullable=False)
+    user_id = Column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
 
-    entry_price = Column(Float, nullable=False)
-    exit_price = Column(Float, nullable=True)
+    symbol = Column(
+        String(50),
+        index=True,
+        nullable=False,
+    )
 
-    stop_loss = Column(Float, nullable=True)
-    take_profit = Column(Float, nullable=True)
+    side = Column(
+        String(10),
+        nullable=False,
+    )
 
-    quantity = Column(Float, nullable=False)
+    entry_price = Column(
+        Float,
+        nullable=False,
+    )
+
+    exit_price = Column(
+        Float,
+        nullable=True,
+    )
+
+    stop_loss = Column(
+        Float,
+        nullable=True,
+    )
+
+    take_profit = Column(
+        Float,
+        nullable=True,
+    )
+
+    quantity = Column(
+        Float,
+        nullable=False,
+    )
 
     status = Column(
         String(20),
@@ -75,7 +128,11 @@ class Trade(Base):
 class PaperAccount(Base):
     __tablename__ = "paper_accounts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
     user_id = Column(
         String(100),
