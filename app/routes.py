@@ -16,7 +16,10 @@ from app.services.order_management import (
     OrderRequest,
 )
 
-router = APIRouter()# ============================================================
+router = APIRouter()
+
+
+# ============================================================
 # REQUEST MODELS
 # ============================================================
 
@@ -89,7 +92,8 @@ class PaperTradeCloseRequest(BaseModel):
 
 class PaperPriceRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=50)
-    current_price: float = Field(..., gt=0)# ============================================================
+    current_price: float = Field(..., gt=0)
+# ============================================================
 # AUTHENTICATION
 # ============================================================
 
@@ -172,7 +176,8 @@ def get_authenticated_user(
     if not result.authenticated:
         return None
 
-    return result# ============================================================
+    return result
+# ============================================================
 # AUTHORIZATION
 # ============================================================
 
@@ -229,7 +234,8 @@ async def authorize(
         "user_id": result.user_id,
         "role": result.role,
         "reason": result.reason,
-    }# ============================================================
+    }
+# ============================================================
 # MARKET DATA
 # ============================================================
 
@@ -257,7 +263,8 @@ async def update_market_data(
         },
     )
 
-    return result# ============================================================
+    return result
+# ============================================================
 # AI MARKET ANALYSIS
 # ============================================================
 
@@ -311,7 +318,8 @@ async def analyze_market(
         },
     )
 
-    return result# ============================================================
+    return result
+# ============================================================
 # RISK MANAGEMENT
 # ============================================================
 
@@ -346,7 +354,8 @@ async def calculate_risk(
         },
     )
 
-    return response# ============================================================
+    return response
+# ============================================================
 # ORDER MANAGEMENT
 # ============================================================
 
@@ -434,7 +443,8 @@ async def order_security_check(
         "reason": result.reason,
         "user_id": user.user_id,
         "role": user.role,
-    }# ============================================================
+    }
+# ============================================================
 # PORTFOLIO API
 # ============================================================
 
@@ -526,8 +536,9 @@ async def get_portfolio_position(
         "entry_price": position.entry_price,
         "stop_loss": position.stop_loss,
         "take_profit": position.take_profit,
-    }# ============================================================
-# PAPER TRADING API
+    }
+# ============================================================
+# PAPER TRADING API — OPEN TRADE
 # ============================================================
 
 @router.post("/api/paper-trading/open")
@@ -576,7 +587,12 @@ async def open_paper_trade(
         "realized_pnl": result.realized_pnl,
         "status": result.status,
         "user_id": user.user_id,
-    }@router.post("/api/paper-trading/close")
+    }
+# ============================================================
+# PAPER TRADING API — CLOSE TRADE
+# ============================================================
+
+@router.post("/api/paper-trading/close")
 async def close_paper_trade(
     request: PaperTradeCloseRequest,
     authorization: str | None = Header(default=None),
@@ -615,7 +631,12 @@ async def close_paper_trade(
         "realized_pnl": result.realized_pnl,
         "status": result.status,
         "user_id": user.user_id,
-    }@router.get("/api/paper-trading/account")
+    }
+# ============================================================
+# PAPER TRADING API — ACCOUNT
+# ============================================================
+
+@router.get("/api/paper-trading/account")
 async def get_paper_account(
     authorization: str | None = Header(default=None),
     db=Depends(get_db),
@@ -648,7 +669,12 @@ async def get_paper_account(
         "total_fees": account.total_fees,
         "created_at": account.created_at,
         "updated_at": account.updated_at,
-    }@router.get("/api/paper-trading/open-trades")
+    }
+# ============================================================
+# PAPER TRADING API — OPEN TRADES
+# ============================================================
+
+@router.get("/api/paper-trading/open-trades")
 async def get_open_paper_trades(
     authorization: str | None = Header(default=None),
     db=Depends(get_db),
@@ -685,7 +711,12 @@ async def get_open_paper_trades(
             }
             for trade in trades
         ],
-    }@router.get("/api/paper-trading/history")
+    }
+# ============================================================
+# PAPER TRADING API — HISTORY
+# ============================================================
+
+@router.get("/api/paper-trading/history")
 async def get_paper_trade_history(
     authorization: str | None = Header(default=None),
     db=Depends(get_db),
@@ -725,7 +756,12 @@ async def get_paper_trade_history(
             }
             for trade in trades
         ],
-    }@router.post("/api/paper-trading/process-price")
+    }
+# ============================================================
+# PAPER TRADING API — PROCESS MARKET PRICE
+# ============================================================
+
+@router.post("/api/paper-trading/process-price")
 async def process_paper_market_price(
     request: PaperPriceRequest,
     authorization: str | None = Header(default=None),
@@ -734,46 +770,6 @@ async def process_paper_market_price(
 
     user = get_authenticated_user(authorization)
 
-    if user is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required",
-        )
-
-    results = PaperTradingService.process_market_price(
-        db=db,
-        user_id=user.user_id,
-        symbol=request.symbol,
-        current_price=request.current_price,
-    )
-
-    audit_service.record(
-        "PAPER_TRADE_PROCESS_PRICE",
-        "SUCCESS",
-        {
-            "user_id": user.user_id,
-            "symbol": request.symbol.upper(),
-            "current_price": request.current_price,
-            "closed_trade_count": len(results),
-        },
-    )
-
-    return {
-        "user_id": user.user_id,
-        "symbol": request.symbol.upper(),
-        "current_price": request.current_price,
-        "closed_trades": [
-            {
-                "approved": result.approved,
-                "trade_id": result.trade_id,
-                "reason": result.reason,
-                "cash": result.cash,
-                "realized_pnl": result.realized_pnl,
-                "status": result.status,
-            }
-            for result in results
-        ],
-    }
     if user is None:
         raise HTTPException(
             status_code=401,
