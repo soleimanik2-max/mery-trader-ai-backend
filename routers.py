@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from database import get_db
 
 from app.services.ai_decision import ai_decision_service
 from app.services.audit_service import audit_service
@@ -13,11 +15,10 @@ from app.services.order_management import (
 from app.services.portfolio_service import portfolio_service
 from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
+from app.services.paper_trading import PaperTradingService
 
 
 router = APIRouter()
-
-
 # ---------------------------------------------------------------------------
 # API STATUS / VERSION
 # ---------------------------------------------------------------------------
@@ -87,8 +88,6 @@ class OrderSecurityRequest(BaseModel):
     take_profit: float | None = Field(default=None, gt=0)
     system_enabled: bool = True
     risk_approved: bool = False
-
-
 # ---------------------------------------------------------------------------
 # AUTHENTICATION
 # ---------------------------------------------------------------------------
@@ -214,8 +213,6 @@ async def authorize(
         "role": result.role,
         "reason": result.reason,
     }
-
-
 # ---------------------------------------------------------------------------
 # MARKET DATA
 # ---------------------------------------------------------------------------
@@ -337,8 +334,6 @@ async def calculate_risk(
     )
 
     return response
-
-
 # ---------------------------------------------------------------------------
 # ORDER MANAGEMENT
 # ---------------------------------------------------------------------------
@@ -448,8 +443,6 @@ async def order_security_check(
         "user_id": user.user_id,
         "role": user.role,
     }
-
-
 # ---------------------------------------------------------------------------
 # PORTFOLIO
 # ---------------------------------------------------------------------------
@@ -533,10 +526,276 @@ async def get_portfolio_position(
     )
 
     return {
-        "symbol": position.symbol,
+        "symbol": symbol,
         "side": position.side,
         "quantity": position.quantity,
         "entry_price": position.entry_price,
         "stop_loss": position.stop_loss,
         "take_profit": position.take_profit,
+    }
+# ---------------------------------------------------------------------------
+# PAPER TRADING
+# ---------------------------------------------------------------------------
+
+class PaperTradeOpenRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=50)
+    side: str = Field(..., min_length=1, max_length=10)
+    entry_price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+    take_profit: float | None = Field(default=None, gt=0)
+    starting_capital: float = Field(..., gt=0)
+
+
+class PaperTradeCloseRequest(BaseModel):
+    trade_id: int = Field(..., gt=0)
+    exit_price: float = Field(..., gt=0)
+
+
+class PaperPriceRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=50)
+    price: float = Field(..., gt=0)
+
+
+@router.post("/api/paper-trading/open")
+async def open_paper_trade(
+    request: PaperTradeOpenRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    trade = service.open_trade(
+        user_id=auth_result.user_id,
+        symbol=request.symbol.upper(),
+        side=request.side.upper(),
+        entry_price=request.entry_price,
+        quantity=request.quantity,
+        stop_loss=request.stop_loss,
+        take_profit=request.take_profit,
+        starting_capital=request.starting_capital,
+    )
+
+    audit_service.record(
+        "PAPER_TRADE_OPEN",
+        "SUCCESS",
+        {
+            "user_id": auth_result.user_id,
+            "trade_id": trade.id,
+            "symbol": trade.symbol,
+            "side": trade.side,
+        },
+    )
+
+    return {
+        "success": True,
+        "trade": {
+            "id": trade.id,
+            "user_id": trade.user_id,
+            "symbol": trade.symbol,
+            "side": trade.side,
+            "entry_price": trade.entry_price,
+            "stop_loss": trade.stop_loss,
+            "take_profit": trade.take_profit,
+            "quantity": trade.quantity,
+            "status": trade.status,
+            "realized_pnl": trade.realized_pnl,
+            "fee": trade.fee,
+            "slippage": trade.slippage,
+        },
+    }
+@router.post("/api/paper-trading/close")
+async def close_paper_trade(
+    request: PaperTradeCloseRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    trade = service.close_trade(
+        user_id=auth_result.user_id,
+        trade_id=request.trade_id,
+        exit_price=request.exit_price,
+    )
+
+    audit_service.record(
+        "PAPER_TRADE_CLOSE",
+        "SUCCESS",
+        {
+            "user_id": auth_result.user_id,
+            "trade_id": trade.id,
+            "symbol": trade.symbol,
+        },
+    )
+
+    return {
+        "success": True,
+        "trade": {
+            "id": trade.id,
+            "user_id": trade.user_id,
+            "symbol": trade.symbol,
+            "side": trade.side,
+            "entry_price": trade.entry_price,
+            "exit_price": trade.exit_price,
+            "stop_loss": trade.stop_loss,
+            "take_profit": trade.take_profit,
+            "quantity": trade.quantity,
+            "status": trade.status,
+            "realized_pnl": trade.realized_pnl,
+            "fee": trade.fee,
+            "slippage": trade.slippage,
+            "closed_at": trade.closed_at,
+        },
+    }
+
+
+@router.get("/api/paper-trading/account")
+async def get_paper_account(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    account = service.get_account(
+        user_id=auth_result.user_id,
+    )
+
+    if account is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Paper trading account not found",
+        )
+
+    return {
+        "user_id": account.user_id,
+        "starting_capital": account.starting_capital,
+        "cash": account.cash,
+        "realized_pnl": account.realized_pnl,
+        "total_fees": account.total_fees,
+        "created_at": account.created_at,
+        "updated_at": account.updated_at,
+    }
+@router.get("/api/paper-trading/open-trades")
+async def get_paper_open_trades(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    trades = service.get_open_trades(
+        user_id=auth_result.user_id,
+    )
+
+    return {
+        "user_id": auth_result.user_id,
+        "trades": [
+            {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "entry_price": trade.entry_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "quantity": trade.quantity,
+                "status": trade.status,
+                "realized_pnl": trade.realized_pnl,
+                "fee": trade.fee,
+                "slippage": trade.slippage,
+                "created_at": trade.created_at,
+            }
+            for trade in trades
+        ],
+    }
+
+
+@router.get("/api/paper-trading/history")
+async def get_paper_trade_history(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    trades = service.get_trade_history(
+        user_id=auth_result.user_id,
+    )
+
+    return {
+        "user_id": auth_result.user_id,
+        "trades": [
+            {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "entry_price": trade.entry_price,
+                "exit_price": trade.exit_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "quantity": trade.quantity,
+                "status": trade.status,
+                "realized_pnl": trade.realized_pnl,
+                "fee": trade.fee,
+                "slippage": trade.slippage,
+                "created_at": trade.created_at,
+                "closed_at": trade.closed_at,
+            }
+            for trade in trades
+        ],
+    }
+
+
+@router.post("/api/paper-trading/process-price")
+async def process_paper_market_price(
+    request: PaperPriceRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    token = require_auth(authorization)
+    auth_result = auth_service.verify_token(token)
+
+    service = PaperTradingService(db)
+
+    result = service.process_market_price(
+        user_id=auth_result.user_id,
+        symbol=request.symbol.upper(),
+        price=request.price,
+    )
+
+    return {
+        "success": True,
+        "user_id": auth_result.user_id,
+        "symbol": request.symbol.upper(),
+        "price": request.price,
+        "result": result,
+    }
+# ---------------------------------------------------------------------------
+# ROOT / HEALTH
+# ---------------------------------------------------------------------------
+
+@router.get("/")
+async def root():
+    return {
+        "app": "MERY TRADER AI",
+        "status": "online",
+    }
+
+
+@router.get("/health")
+async def health():
+    return {
+        "status": "healthy",
     }
