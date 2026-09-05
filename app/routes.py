@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from database import get_db
 from app.services.ai_decision import ai_decision_service
 from app.services.audit_service import audit_service
 from app.services.auth_service import auth_service
@@ -9,6 +10,7 @@ from app.services.market_data import market_data_service
 from app.services.portfolio_service import portfolio_service
 from app.services.risk_management import risk_management_service
 from app.services.technical_analysis import technical_analysis_service
+from app.services.paper_trading import PaperTradingService
 from app.services.order_management import (
     OrderManagementService,
     OrderRequest,
@@ -71,6 +73,30 @@ class OrderSecurityRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# PAPER TRADING REQUEST MODELS
+# ---------------------------------------------------------------------------
+
+class PaperTradeOpenRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=50)
+    side: str = Field(..., min_length=1, max_length=10)
+    quantity: float = Field(..., gt=0)
+    entry_price: float = Field(..., gt=0)
+    starting_capital: float = Field(..., gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+    take_profit: float | None = Field(default=None, gt=0)
+
+
+class PaperTradeCloseRequest(BaseModel):
+    trade_id: int = Field(..., gt=0)
+    exit_price: float = Field(..., gt=0)
+
+
+class PaperPriceRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=50)
+    current_price: float = Field(..., gt=0)
+
+
+# ---------------------------------------------------------------------------
 # AUTHENTICATION
 # ---------------------------------------------------------------------------
 
@@ -128,6 +154,21 @@ def require_auth(authorization: str | None) -> str:
         )
 
     return token
+
+
+def get_authenticated_user(
+    authorization: str | None,
+):
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization[7:].strip()
+    result = auth_service.verify_token(token)
+
+    if not result.authenticated:
+        return None
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -315,21 +356,6 @@ async def calculate_risk(
 # ORDER MANAGEMENT
 # ---------------------------------------------------------------------------
 
-def get_authenticated_user(
-    authorization: str | None,
-):
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-
-    token = authorization[7:].strip()
-    result = auth_service.verify_token(token)
-
-    if not result.authenticated:
-        return None
-
-    return result
-
-
 @router.post("/api/orders/validate")
 async def validate_order(
     request: OrderAPIRequest,
@@ -505,3 +531,215 @@ async def get_portfolio_position(
         "stop_loss": position.stop_loss,
         "take_profit": position.take_profit,
     }
+
+
+# ---------------------------------------------------------------------------
+# PAPER TRADING API
+# ---------------------------------------------------------------------------
+
+@router.post("/api/paper-trading/open")
+async def open_paper_trade(
+    request: PaperTradeOpenRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    user = get_authenticated_user(authorization)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    result = PaperTradingService.open_trade(
+        db=db,
+        user_id=user.user_id,
+        symbol=request.symbol,
+        side=request.side.upper(),
+        quantity=request.quantity,
+        entry_price=request.entry_price,
+        starting_capital=request.starting_capital,
+        stop_loss=request.stop_loss,
+        take_profit=request.take_profit,
+    )
+
+    audit_service.record(
+        "PAPER_TRADE_OPEN",
+        "APPROVED" if result.approved else "REJECTED",
+        {
+            "user_id": user.user_id,
+            "symbol": request.symbol,
+            "side": request.side.upper(),
+            "trade_id": result.trade_id,
+        },
+    )
+
+    return {
+        "approved": result.approved,
+        "trade_id": result.trade_id,
+        "reason": result.reason,
+        "cash": result.cash,
+        "realized_pnl": result.realized_pnl,
+        "status": result.status,
+        "user_id": user.user_id,
+    }
+
+
+@router.post("/api/paper-trading/close")
+async def close_paper_trade(
+    request: PaperTradeCloseRequest,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    user = get_authenticated_user(authorization)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    result = PaperTradingService.close_trade(
+        db=db,
+        user_id=user.user_id,
+        trade_id=request.trade_id,
+        exit_price=request.exit_price,
+    )
+
+    audit_service.record(
+        "PAPER_TRADE_CLOSE",
+        "APPROVED" if result.approved else "REJECTED",
+        {
+            "user_id": user.user_id,
+            "trade_id": request.trade_id,
+        },
+    )
+
+    return {
+        "approved": result.approved,
+        "trade_id": result.trade_id,
+        "reason": result.reason,
+        "cash": result.cash,
+        "realized_pnl": result.realized_pnl,
+        "status": result.status,
+        "user_id": user.user_id,
+    }
+
+
+@router.get("/api/paper-trading/account")
+async def get_paper_account(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    user = get_authenticated_user(authorization)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    account = PaperTradingService.get_account(
+        db=db,
+        user_id=user.user_id,
+    )
+
+    if account is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Paper account not found",
+        )
+
+    return {
+        "user_id": account.user_id,
+        "starting_capital": account.starting_capital,
+        "cash": account.cash,
+        "realized_pnl": account.realized_pnl,
+        "total_fees": account.total_fees,
+        "created_at": account.created_at,
+        "updated_at": account.updated_at,
+    }
+
+
+@router.get("/api/paper-trading/open-trades")
+async def get_open_paper_trades(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    user = get_authenticated_user(authorization)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    trades = PaperTradingService.get_open_trades(
+        db=db,
+        user_id=user.user_id,
+    )
+
+    return {
+        "user_id": user.user_id,
+        "trades": [
+            {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "quantity": trade.quantity,
+                "entry_price": trade.entry_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "status": trade.status,
+                "fee": trade.fee,
+                "slippage": trade.slippage,
+                "created_at": trade.created_at,
+            }
+            for trade in trades
+        ],
+    }
+
+
+@router.get("/api/paper-trading/history")
+async def get_paper_trade_history(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db),
+):
+    user = get_authenticated_user(authorization)
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+        )
+
+    trades = PaperTradingService.get_trade_history(
+        db=db,
+        user_id=user.user_id,
+    )
+
+    return {
+        "user_id": user.user_id,
+        "trades": [
+            {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "quantity": trade.quantity,
+                "entry_price": trade.entry_price,
+                "exit_price": trade.exit_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "status": trade.status,
+                "realized_pnl": trade.realized_pnl,
+                "fee": trade.fee,
+                "slippage": trade.slippage,
+                "created_at": trade.created_at,
+                "closed_at": trade.closed_at,
+            }
+            for trade in trades
+        ],
+    }
+
+
+@router.post("/api/paper-t
