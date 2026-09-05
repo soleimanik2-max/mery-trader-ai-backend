@@ -41,11 +41,7 @@ class MarketData(Base):
 class Trade(Base):
     __tablename__ = "trades"
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True,
-    )
+    id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(
         String(100),
@@ -128,11 +124,7 @@ class Trade(Base):
 class PaperAccount(Base):
     __tablename__ = "paper_accounts"
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        index=True,
-    )
+    id = Column(Integer, primary_key=True, index=True)
 
     user_id = Column(
         String(100),
@@ -172,5 +164,44 @@ class PaperAccount(Base):
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_tokens"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    token_hash = Column(
+        String(64),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    user_id = Column(
+        String(100),
+        index=True,
+        nullable=False,
+    )
+
+    role = Column(
+        String(20),
+        nullable=False,
+    )
+
+    expires_at = Column(
+        DateTime,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
